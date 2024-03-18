@@ -6,7 +6,6 @@
 #include <vector>
 #include <string>
 #include <iostream>
-#include <format>
 #include <map>
 #include <tuple>
 #include <cstdlib>
@@ -17,8 +16,19 @@ struct version_wrapper_t
 {
 public:
     uint32_t version;
+public:
+    friend ostream& operator<<(ostream& os, const version_wrapper_t& vw);
 };
 
+ostream& operator<<(ostream& os, const version_wrapper_t& vw)
+{
+    const auto major = VK_VERSION_MAJOR(vw.version);
+    const auto minor = VK_VERSION_MINOR(vw.version);
+    const auto patch = VK_VERSION_PATCH(vw.version);
+    os << major << '.' << minor << '.' << patch;
+    return os;
+}
+/*
 template <>
 struct formatter<version_wrapper_t> : formatter<string> {
     auto format(const version_wrapper_t& vw, format_context& ctx) const {
@@ -53,7 +63,7 @@ struct formatter<vk::QueueFlags> : formatter<string> {
         return current;
     }
 };
-
+*/
 void* aligned_alloc(size_t size, size_t alignment)
 {
     if(alignment < alignof(void*))

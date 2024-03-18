@@ -1,9 +1,8 @@
 #include <helpers.hpp>
+#include <print.hpp>
 
 constexpr auto requiredInstanceExtensions = {
         "VK_KHR_surface",
-        "VK_KHR_win32_surface",
-        "VK_EXT_swapchain_colorspace",
         "VK_KHR_get_physical_device_properties2",
         "VK_KHR_get_surface_capabilities2",
         "VK_KHR_external_fence_capabilities",
@@ -75,7 +74,7 @@ bool checkPhysicalDeviceExtensions(const vk::PhysicalDevice& physicalDevice, con
         deviceExtensions.insert(extension.extensionName.data());
     }
 
-    cout << format("Checking device: {}", deviceProperties.deviceName.data()) << endl;
+    cout << "Checking device: " << deviceProperties.deviceName.data() << endl;
     for(const auto& requiredExtension : requiredExtensions)
     {
         if(!deviceExtensions.contains(string_view{requiredExtension}))
@@ -84,14 +83,14 @@ bool checkPhysicalDeviceExtensions(const vk::PhysicalDevice& physicalDevice, con
 
     if(missingExtensions.empty())
     {
-        cout << format("Checking device: {} - OK", deviceProperties.deviceName.data()) << endl;
+        cout << "Checking device: " << deviceProperties.deviceName.data() << " - OK" << endl;
     }
     else
     {
-        cout << format("Checking device: {} - MISSING EXTENSIONS:", deviceProperties.deviceName.data()) << endl;
+        cout << "Checking device: " << deviceProperties.deviceName.data() << " - MISSING EXTENSIONS:" << endl;
         for(const auto missingExtension: missingExtensions)
         {
-            cout << format("\t- {}", missingExtension) << endl;
+            cout << "\t- " << missingExtension << endl;
         }
     }
 
@@ -186,6 +185,9 @@ int main()
     const auto dispatchLoader = vk::DispatchLoaderStatic();
     const auto allocationCallbacks = vk::createDefaultAllocationCallbacks();
 
+    printInstanceExtensions(dispatchLoader);
+    printLayersWithInstanceExtensions(dispatchLoader);
+
     const auto applicationInfo = vk::ApplicationInfo(
         "Test",
         VK_MAKE_VERSION(1, 0, 0),
@@ -202,8 +204,11 @@ int main()
     );
 
     const auto instance = vk::createInstance(instanceCreateInfo, allocationCallbacks, dispatchLoader);
+
+    printAllPhysicalDevicesWithExtensionsAndProperties(instance, dispatchLoader);
+
     {
-        cout << format("Selecting device...") << endl;
+        cout << "Selecting device..." << endl;
         const auto physicalDeviceAndQueueFamilyIndices = findSuitablePhysicalDevice(instance, requiredDeviceExtensions, dispatchLoader);
 
         if(!physicalDeviceAndQueueFamilyIndices)
@@ -214,7 +219,7 @@ int main()
             const auto& [physicalDevice, queueFamilyIndices] = *physicalDeviceAndQueueFamilyIndices;
 
             const auto physicalDeviceProperties = physicalDevice.getProperties(dispatchLoader);
-            cout << format("Selected device = {}", physicalDeviceProperties.deviceName.data()) << endl;
+            cout << "Selected device = " << physicalDeviceProperties.deviceName.data() << endl;
 
             const float priority = 1.0f;
             const auto deviceQueueCreateInfo = vk::DeviceQueueCreateInfo(

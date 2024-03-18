@@ -19,7 +19,7 @@ target_link_libraries(thesis_render PRIVATE
 )
 set_target_properties(thesis_render
         PROPERTIES
-        CXX_STANDARD 23
+        CXX_STANDARD 20
         CXX_STANDARD_REQUIRED YES
         CXX_EXTENSIONS NO
 )

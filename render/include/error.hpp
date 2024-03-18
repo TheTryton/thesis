@@ -9,7 +9,7 @@ namespace VULKAN_RENDER_NAMESPACE
     private:
         VkResult _value;
     public:
-        constexpr error_t() = default;
+        error_t() = default;
         constexpr error_t(VkResult value)
             : _value(value)
         {

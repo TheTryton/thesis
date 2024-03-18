@@ -2,7 +2,6 @@
 
 #include <vulkan/vulkan.hpp>
 
-#include <expected>
 #include <optional>
 
 #include <memory>
@@ -20,7 +19,6 @@
 namespace VULKAN_RENDER_NAMESPACE
 {
     using std::vector;
-    using std::expected;
     using std::allocator;
     using std::unexpected;
     using std::allocator_traits;

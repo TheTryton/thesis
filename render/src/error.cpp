@@ -113,7 +113,7 @@ namespace VULKAN_RENDER_NAMESPACE
         }
     };
 
-    constexpr static error_t_category error_category{};
+    const static error_t_category error_category{};
 }
 
 namespace std
