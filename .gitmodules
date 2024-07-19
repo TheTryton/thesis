@@ -1,0 +1,24 @@
+[submodule "old/third-party/SPIRV-Reflect"]
+	path = old/third-party/SPIRV-Reflect
+	url = https://github.com/KhronosGroup/SPIRV-Reflect.git
+[submodule "old/third-party/rapidobj"]
+	path = old/third-party/rapidobj
+	url = https://github.com/guybrush77/rapidobj.git
+[submodule "clustered"]
+	path = clustered
+	url = https://github.com/TheTryton/clustered.git
+[submodule "tiled"]
+	path = tiled
+	url = https://github.com/TheTryton/tiled.git
+[submodule "unreal"]
+	path = unreal
+	url = https://github.com/TheTryton/unreal
+[submodule "unity-hdrp"]
+	path = unity-hdrp
+	url = https://github.com/TheTryton/unity.git
+[submodule "unity-urp"]
+	path = unity-urp
+	url = https://github.com/TheTryton/unity.git
+[submodule "unity-builtin"]
+	path = unity-builtin
+	url = https://github.com/TheTryton/unity.git

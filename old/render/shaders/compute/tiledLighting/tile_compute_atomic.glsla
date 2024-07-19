@@ -1,0 +1,99 @@
+#version 450
+
+layout(constant_id = 0) const uint tileSizeX = 16;
+layout(constant_id = 1) const uint tileSizeY = 16;
+
+layout(constant_id = 2) const uint localSize = 16;
+
+layout(constant_id = 3) const uint maxLightsPerTile = 32;
+
+struct attenuation_curve
+{
+    float c;
+    float b;
+    float a;
+};
+
+struct spot_light
+{
+    vec3 position;
+    vec3 direction;
+    vec4 color;
+    float cutoff;
+    attenuation_curve attenuation;
+};
+
+layout(set = 0, binding = 0) readonly buffer spotLights{
+    spot_light spotLights[];
+};
+
+shared uint tileSpotLights[maxLightsPerTile];
+shared atomic_uint tileSpotLightIndex;
+shared atomic_uint tileSpotLightsCount;
+
+shared uint tileWriteOffset;
+
+layout(set = 1, binding = 0) writeonly buffer uint spotLightTileIndices[];
+layout(set = 1, binding = 1) writeonly buffer uint spotLightTileOffsets[];
+layout(set = 1, binding = 2) uniform atomic_uint spotLightsIndexOffset;
+
+struct frustrum
+{
+
+};
+
+frustrum makeTileFrustrum(uint tileIndex)
+{
+    return frustrum();
+}
+
+bool isSpotLightVisible(uint spotLightIndex, frustrum tileFrustrum)
+{
+    return true;
+}
+
+layout(local_size_x = localSize, local_size_y = 1, local_size_z = 1) in;
+void main()
+{
+    tileSpotLightIndex = 0;
+    tileSpotLightsCount = 0;
+
+    memoryBarrierShared();
+
+    uint tileIndex = dot(gl_WorkGroupID.xy, uvec2(1, gl_WorkGroupSize.x));
+    uint localIndex = gl_LocalInvocationID.x;
+    uint globalIndex = gl_GlobalInvocationID.x;
+
+    uint spotLightCount = length(spotLights);
+    frustrum tileFrustrum = makeTileFrustrum(tileIndex);
+
+    for(uint spotLightIndex = localIndex; spotLightIndex < spotLightCount; spotLightIndex += localSize)
+    {
+        if(isSpotLightVisible(spotLightIndex, tileFrustrum))
+        {
+            uint insertionIndex = atomicAdd(tileSpotLightIndex, 1);
+
+            if(insertionIndex >= maxLightsPerTile)
+            break;
+
+            tileSpotLights[insertionIndex] = spotLightIndex;
+            atomicAdd(tileSpotLightsCount, 1);
+        }
+    }
+
+    memoryBarrierShared();
+    if(localIndex == 0)
+    {
+        // reserve size to spotLightTileIndices SSBO
+        tileWriteOffset = atomicAdd(spotLightsIndexOffset, tileSpotLightsCount);
+        // save it to spotLightTileOffsets
+        spotLightTileOffsets[tileIndex] = tileSpotLightsWriteOffset;
+    }
+    memoryBarrierShared();
+
+    // copy shared data to global spotLightTileIndices SSBO
+    for(uint sharedLightIndex = localIndex; sharedLightIndex < tileSpotLightsCount; sharedLightIndex += localSize)
+    {
+        spotLightTileIndices[tileSpotLightsWriteOffset + sharedLightIndex] = tileSpotLights[sharedLightIndex];
+    }
+}

@@ -1,0 +1,1759 @@
+#include <helpers.hpp>
+#include <print.hpp>
+
+const initializer_list<const char* const> enabledInstanceExtensions = {
+    VK_KHR_SURFACE_EXTENSION_NAME,
+    VK_KHR_WIN32_SURFACE_EXTENSION_NAME
+};
+
+const initializer_list<const char* const> enabledDeviceExtensions = {
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME
+};
+
+const initializer_list<const char* const> enabledLayers = {
+    "VK_LAYER_KHRONOS_validation"
+};
+
+template<typename Dispatch>
+bool checkPhysicalDeviceExtensions(const vk::PhysicalDevice& physicalDevice, span<const char* const> requiredExtensions, const Dispatch& dispatchLoader)
+{
+    const auto deviceProperties = physicalDevice.getProperties(dispatchLoader);
+
+    std::vector<string_view> missingExtensions{};
+
+    const auto extensions = physicalDevice.enumerateDeviceExtensionProperties(nullptr_t{}, dispatchLoader);
+    std::set<string_view> deviceExtensions{};
+    for(const auto& extension : extensions)
+    {
+        deviceExtensions.insert(extension.extensionName.data());
+    }
+
+    cout << "Checking device: " << deviceProperties.deviceName.data() << endl;
+    for(const auto& requiredExtension : requiredExtensions)
+    {
+        if(!deviceExtensions.contains(string_view{requiredExtension}))
+            missingExtensions.emplace_back(requiredExtension);
+    }
+
+    if(missingExtensions.empty())
+    {
+        cout << "Checking device: " << deviceProperties.deviceName.data() << " - OK" << endl;
+    }
+    else
+    {
+        cout << "Checking device: " << deviceProperties.deviceName.data() << " - MISSING EXTENSIONS:" << endl;
+        for(const auto missingExtension: missingExtensions)
+        {
+            cout << "\t- " << missingExtension << endl;
+        }
+    }
+
+    return missingExtensions.empty();
+}
+
+struct queueFamilyIndex_t
+{
+public:
+    uint32_t index;
+};
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+optional<queueFamilyIndex_t> findPhysicalDeviceQueueFamilies(const vk::PhysicalDevice& physicalDevice, const Dispatch& dispatchLoader)
+{
+    const auto queueFamilyProperties = physicalDevice.getQueueFamilyProperties();
+
+    uint32_t index = 0;
+    for(const auto& queueFamilyProperty : queueFamilyProperties)
+    {
+        //cout << format("QueueFamily:") << endl;
+        //cout << format("\t- count: {}", queueFamilyProperty.queueCount) << endl;
+        //cout << format("\t- flags: {}", queueFamilyProperty.queueFlags) << endl;
+
+        if(
+            queueFamilyProperty.queueFlags & vk::QueueFlagBits::eGraphics &&
+            queueFamilyProperty.queueFlags & vk::QueueFlagBits::eCompute &&
+            queueFamilyProperty.queueFlags & vk::QueueFlagBits::eTransfer
+        )
+            return queueFamilyIndex_t{index};
+
+        index++;
+    }
+
+    return nullopt;
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+optional<tuple<vk::PhysicalDevice, queueFamilyIndex_t>> findSuitablePhysicalDevice(const vk::Instance& instance, span<const char* const> requiredExtensions, const Dispatch& dispatchLoader)
+{
+    const auto physicalDevices = instance.enumeratePhysicalDevices(dispatchLoader);
+
+    for(const auto& physicalDevice : physicalDevices)
+    {
+        const auto physicalDeviceProperties = physicalDevice.getProperties(dispatchLoader);
+        cout << "Available device = " << physicalDeviceProperties.deviceName.data() << endl;
+    }
+
+    for(const auto& physicalDevice : physicalDevices)
+    {
+        if(!checkPhysicalDeviceExtensions(physicalDevice, requiredExtensions, dispatchLoader))
+            continue;
+
+        const auto queueFamilyIndices = findPhysicalDeviceQueueFamilies(physicalDevice, dispatchLoader);
+
+        if(queueFamilyIndices)
+            return make_tuple(physicalDevice, *queueFamilyIndices);
+    }
+
+    return nullopt;
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+bool isPhysicalDeviceSuitable(const vk::PhysicalDevice& physicalDevice, span<const char* const> requiredExtensions, const Dispatch& dispatchLoader)
+{
+    if(!checkPhysicalDeviceExtensions(physicalDevice, requiredExtensions, dispatchLoader))
+        return false;
+
+    return true;
+}
+
+span<const char* const> getRequiredDeviceExtensions()
+{
+    return {data(enabledDeviceExtensions), size(enabledDeviceExtensions)};
+}
+
+vector<const char*> getRequiredInstanceExtensions()
+{
+    uint32_t extensionsCount;
+    auto extensions = glfwGetRequiredInstanceExtensions(&extensionsCount);
+    if(extensionsCount == 0)
+        std::cout << "No extensions?" << std::endl;
+    else
+        std::cout << extensions[0] << std::endl;
+    vector<const char*> allExtensions(extensionsCount + size(enabledInstanceExtensions));
+    copy(
+        begin(enabledInstanceExtensions),
+        end(enabledInstanceExtensions),
+        copy(
+            extensions,
+            extensions + extensionsCount,
+            begin(allExtensions)
+        )
+    );
+    return allExtensions;
+}
+
+span<const char* const> getRequiredLayers()
+{
+    return {data(enabledLayers), size(enabledLayers)};
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+vk::Instance createInstance(const vk::AllocationCallbacks& allocationCallbacks, span<const char* const> requiredLayers, span<const char* const> requiredExtensions, const Dispatch& dispatchLoader)
+{
+    const auto applicationInfo = vk::ApplicationInfo(
+            "Test",
+            VK_MAKE_VERSION(1, 0, 0),
+            "render",
+            VK_MAKE_VERSION(0, 0, 1),
+            VK_API_VERSION_1_0
+    );
+
+    const auto instanceCreateInfo = vk::InstanceCreateInfo(
+            {},
+            &applicationInfo,
+            size(requiredLayers),
+            data(requiredLayers),
+            size(requiredExtensions),
+            data(requiredExtensions)
+    );
+
+    static_assert(is_default_constructible_v<vk::Instance>);
+    static_assert(is_trivially_copyable_v<vk::Instance>);
+    static_assert(is_trivially_destructible_v<vk::Instance>);
+    //return vk::Instance{};
+
+    return vk::createInstance(instanceCreateInfo, allocationCallbacks, dispatchLoader);
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+tuple< vk::Device, queueFamilyIndex_t> createDevice(
+    const vk::PhysicalDevice& physicalDevice,
+    span<const char* const> requiredLayers,
+    span<const char* const> requiredExtensions,
+    const vk::AllocationCallbacks& allocationCallbacks,
+    const Dispatch& dispatchLoader
+)
+{
+    const auto queueFamilyIndices = findPhysicalDeviceQueueFamilies(physicalDevice, dispatchLoader);
+    /*findSuitablePhysicalDevice(
+        instance,
+        requiredExtensions,
+        dispatchLoader
+    );*/
+
+    if (!queueFamilyIndices)
+    {
+        throw runtime_error("Device doesn't have required queue family indices!");
+    }
+    else
+    {
+        const auto queueFamilyIndex = *queueFamilyIndices;
+
+        const auto physicalDeviceProperties = physicalDevice.getProperties(dispatchLoader);
+        cout << "Selected device = " << physicalDeviceProperties.deviceName.data() << endl;
+
+        const float priority = 1.0f;
+        const auto deviceQueueCreateInfo = vk::DeviceQueueCreateInfo(
+            {},
+            queueFamilyIndex.index,
+            1,
+            &priority
+        );
+
+        auto usedPhysicalDeviceFeatures = vk::PhysicalDeviceFeatures();
+        //usedPhysicalDeviceFeatures.samplerAnisotropy = vk::True;
+
+        const auto deviceCreateInfo = vk::DeviceCreateInfo(
+            {},
+            1,
+            &deviceQueueCreateInfo,
+            size(requiredLayers),
+            data(requiredLayers),
+            size(requiredExtensions),
+            data(requiredExtensions),
+            &usedPhysicalDeviceFeatures
+        );
+
+        return make_tuple(physicalDevice.createDevice(deviceCreateInfo, allocationCallbacks, dispatchLoader), queueFamilyIndex);
+    }
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+vk::SurfaceKHR createWindowSurface(const vk::Instance& instance, GLFWwindow* window, const vk::AllocationCallbacks& allocationCallbacks, const Dispatch& dispatchLoader)
+{
+    auto hinstance = GetModuleHandle(nullptr);
+    auto hwnd = glfwGetWin32Window(window);
+
+    const auto createInfo = vk::Win32SurfaceCreateInfoKHR(
+        {},
+        hinstance,
+        hwnd
+    );
+
+    return instance.createWin32SurfaceKHR(createInfo, allocationCallbacks, dispatchLoader);
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+vk::SurfaceKHR createWindowSurface(const vk::Instance& instance, QWidget* widget, const vk::AllocationCallbacks& allocationCallbacks, const Dispatch& dispatchLoader)
+{
+    auto hinstance = GetModuleHandle(nullptr);
+    auto hwnd = std::bit_cast<HWND>(widget->effectiveWinId());
+
+    const auto createInfo = vk::Win32SurfaceCreateInfoKHR(
+        {},
+        hinstance,
+        hwnd
+    );
+
+    return instance.createWin32SurfaceKHR(createInfo, allocationCallbacks, dispatchLoader);
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+vk::SurfaceFormatKHR selectSwapChainFormat(const vk::PhysicalDevice& physicalDevice, const vk::SurfaceKHR& surface, const Dispatch& dispatchLoader)
+{
+    const auto surfaceFormats = physicalDevice.getSurfaceFormatsKHR(surface, dispatchLoader);
+    for(const auto& surfaceFormat : surfaceFormats)
+    {
+        if(surfaceFormat.format == vk::Format::eB8G8R8A8Unorm && surfaceFormat.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear)
+            return surfaceFormat;
+    }
+
+    throw runtime_error("Could not find suitable surface format!");
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+vk::PresentModeKHR selectSwapChainPresentMode(const vk::PhysicalDevice& physicalDevice, const vk::SurfaceKHR& surface, const Dispatch& dispatchLoader)
+{
+    const auto surfacePresentModes = physicalDevice.getSurfacePresentModesKHR(surface, dispatchLoader);
+    for(const auto& surfacePresentMode : surfacePresentModes)
+    {
+        if(surfacePresentMode == vk::PresentModeKHR::eMailbox)
+            return surfacePresentMode;
+    }
+
+    return vk::PresentModeKHR::eFifo;
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+vk::Extent2D chooseSwapChainExtent(const vk::PhysicalDevice& physicalDevice, const vk::SurfaceKHR& surface, GLFWwindow* window, const Dispatch& dispatchLoader)
+{
+    const auto surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface, dispatchLoader);
+    if (surfaceCapabilities.currentExtent.width != std::numeric_limits<uint32_t>::max())
+    {
+        return surfaceCapabilities.currentExtent;
+    }
+    else
+    {
+        int width, height;
+        glfwGetFramebufferSize(window, &width, &height);
+
+        VkExtent2D actualExtent = {
+            static_cast<uint32_t>(width),
+            static_cast<uint32_t>(height)
+        };
+
+        actualExtent.width = std::clamp(
+            actualExtent.width,
+            surfaceCapabilities.minImageExtent.width,
+            surfaceCapabilities.maxImageExtent.width
+        );
+
+        actualExtent.height = std::clamp(
+            actualExtent.height,
+            surfaceCapabilities.minImageExtent.height,
+            surfaceCapabilities.maxImageExtent.height
+        );
+
+        return actualExtent;
+    }
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+vk::Extent2D chooseSwapChainExtent(const vk::PhysicalDevice& physicalDevice, const vk::SurfaceKHR& surface, QWidget* window, const Dispatch& dispatchLoader)
+{
+    const auto surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface, dispatchLoader);
+    if (surfaceCapabilities.currentExtent.width != std::numeric_limits<uint32_t>::max())
+    {
+        return surfaceCapabilities.currentExtent;
+    }
+    else
+    {
+        const auto size = window->size();
+        int width = size.width(), height = size.height();
+
+        VkExtent2D actualExtent = {
+            static_cast<uint32_t>(width),
+            static_cast<uint32_t>(height)
+        };
+
+        actualExtent.width = std::clamp(
+            actualExtent.width,
+            surfaceCapabilities.minImageExtent.width,
+            surfaceCapabilities.maxImageExtent.width
+        );
+
+        actualExtent.height = std::clamp(
+            actualExtent.height,
+            surfaceCapabilities.minImageExtent.height,
+            surfaceCapabilities.maxImageExtent.height
+        );
+
+        return actualExtent;
+    }
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+tuple<vk::SurfaceFormatKHR, vk::PresentModeKHR, vk::Extent2D> createSwapChainDetails(const vk::PhysicalDevice& physicalDevice, const vk::SurfaceKHR& surface, GLFWwindow* window, const Dispatch& dispatchLoader)
+{
+    return make_tuple(
+        selectSwapChainFormat(physicalDevice, surface, dispatchLoader),
+        selectSwapChainPresentMode(physicalDevice, surface, dispatchLoader),
+        chooseSwapChainExtent(physicalDevice, surface, window, dispatchLoader)
+    );
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+tuple<vk::SurfaceFormatKHR, vk::PresentModeKHR, vk::Extent2D> createSwapChainDetails(const vk::PhysicalDevice& physicalDevice, const vk::SurfaceKHR& surface, QWidget* window, const Dispatch& dispatchLoader)
+{
+    return make_tuple(
+        selectSwapChainFormat(physicalDevice, surface, dispatchLoader),
+        selectSwapChainPresentMode(physicalDevice, surface, dispatchLoader),
+        chooseSwapChainExtent(physicalDevice, surface, window, dispatchLoader)
+    );
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+tuple<vk::SwapchainKHR, vector<vk::ImageView>> createSwapChainAndImageViews(
+    const vk::PhysicalDevice& physicalDevice,
+    const vk::Device& device,
+    const vk::SurfaceKHR& surface,
+    const queueFamilyIndex_t& queueFamilyIndex,
+    const vk::SurfaceFormatKHR& swapChainFormat,
+    const vk::PresentModeKHR& swapChainPresentMode,
+    const vk::Extent2D& swapChainExtent,
+    const vk::SwapchainKHR& oldSwapChain,
+    const vk::AllocationCallbacks& allocationCallbacks,
+    const Dispatch& dispatchLoader
+)
+{
+    const vk::SurfaceCapabilitiesKHR capabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface, dispatchLoader);
+
+    const auto createInfo = vk::SwapchainCreateInfoKHR(
+        {},
+        surface,
+        capabilities.maxImageCount == 0 ? 3u : clamp(3u, capabilities.minImageCount, capabilities.maxImageCount),
+        swapChainFormat.format,
+        swapChainFormat.colorSpace,
+        swapChainExtent,
+        1,
+        vk::ImageUsageFlagBits::eColorAttachment,
+        vk::SharingMode::eExclusive,
+        {},
+        {},
+        capabilities.currentTransform,
+        vk::CompositeAlphaFlagBitsKHR::eOpaque,
+        swapChainPresentMode,
+        true,
+        oldSwapChain
+    );
+
+    const auto swapChain = device.createSwapchainKHR(createInfo, allocationCallbacks, dispatchLoader);
+
+    const auto swapChainImages = device.getSwapchainImagesKHR(swapChain, dispatchLoader);
+    std::vector<vk::ImageView> swapChainImageViews(size(swapChainImages));
+    transform(
+        begin(swapChainImages),
+        end(swapChainImages),
+        begin(swapChainImageViews),
+        [swapChainFormat, &device, &allocationCallbacks, &dispatchLoader](const auto& swapChainImage)
+        {
+            const auto createInfo = vk::ImageViewCreateInfo(
+                {},
+                swapChainImage,
+                vk::ImageViewType::e2D,
+                swapChainFormat.format,
+                vk::ComponentMapping(vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity),
+                vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)
+            );
+            return device.createImageView(createInfo, allocationCallbacks, dispatchLoader);
+        }
+    );
+
+    return make_tuple(swapChain, swapChainImageViews);
+}
+
+vector<char> loadShader(const filesystem::path& path)
+{
+    ifstream file;
+
+    const auto absolutePath = filesystem::absolute(path);
+    file.open(absolutePath, ios::ate | ios::binary);
+    assert(file.is_open());
+
+    std::vector<char> buffer(file.tellg());
+
+    file.seekg(0);
+    file.read(buffer.data(), buffer.size());
+
+    file.close();
+
+    return buffer;
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+vk::ShaderModule createShaderModule(const vk::Device& device, span<const char> shaderBinary, const vk::AllocationCallbacks& allocationCallbacks, const Dispatch& dispatchLoader)
+{
+    const auto createInfo = vk::ShaderModuleCreateInfo(
+        {},
+        size(shaderBinary),
+        reinterpret_cast<const uint32_t*>(data(shaderBinary))
+    );
+
+    return device.createShaderModule(createInfo, allocationCallbacks, dispatchLoader);
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+vk::DescriptorSetLayout createDescriptorSetLayout(
+    const vk::Device& device,
+    const vk::AllocationCallbacks& allocationCallbacks,
+    const Dispatch& dispatchLoader
+)
+{
+    const auto imageBinding = vk::DescriptorSetLayoutBinding(
+        0,
+        vk::DescriptorType::eSampledImage,
+        1,
+        vk::ShaderStageFlagBits::eFragment,
+        nullptr
+    );
+
+    const auto samplerBinding = vk::DescriptorSetLayoutBinding(
+        1,
+        vk::DescriptorType::eSampler,
+        1,
+        vk::ShaderStageFlagBits::eFragment,
+        nullptr
+    );
+
+    const auto bindings = {imageBinding, samplerBinding};
+
+    const auto createInfo = vk::DescriptorSetLayoutCreateInfo(
+        {},
+        bindings
+    );
+
+    const auto descriptorSetLayout = device.createDescriptorSetLayout(createInfo, allocationCallbacks, dispatchLoader);
+
+    return descriptorSetLayout;
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+tuple<vk::PipelineLayout, vk::RenderPass, vk::Pipeline> createPipeline(
+    const vk::Device& device,
+    const vk::SurfaceFormatKHR& surfaceFormat,
+    const vk::Extent2D& extent,
+    const vk::DescriptorSetLayout& descriptorSetLayout,
+    const vk::AllocationCallbacks& allocationCallbacks,
+    const Dispatch& dispatchLoader
+)
+{
+    const auto vertexShaderBinary = loadShader("shaders/vertex/vertex.spv");
+    const auto fragmentShaderBinary = loadShader("shaders/fragment/fragment.spv");
+
+    const auto vertexShaderModule = createShaderModule(device, vertexShaderBinary, allocationCallbacks, dispatchLoader);
+    const auto fragmentShaderModule = createShaderModule(device, fragmentShaderBinary, allocationCallbacks, dispatchLoader);
+
+    const auto vertexCreateInfo = vk::PipelineShaderStageCreateInfo(
+        {},
+        vk::ShaderStageFlagBits::eVertex,
+        vertexShaderModule,
+        "main"
+    );
+    const auto fragmentCreateInfo = vk::PipelineShaderStageCreateInfo(
+        {},
+        vk::ShaderStageFlagBits::eFragment,
+        fragmentShaderModule,
+        "main"
+    );
+
+    const auto shaderStages= {vertexCreateInfo, fragmentCreateInfo};
+
+    const auto dynamicStates = {
+        vk::DynamicState::eViewport,
+        vk::DynamicState::eScissor
+    };
+
+    const auto dynamicStateCreateInfo = vk::PipelineDynamicStateCreateInfo(
+        {},
+        size(dynamicStates),
+        data(dynamicStates)
+    );
+
+    const auto vertexInputCreateInfo = vk::PipelineVertexInputStateCreateInfo(
+        {},
+        0,
+        nullptr,
+        0,
+        nullptr
+    );
+
+    const auto inputAssemblyCreateInfo = vk::PipelineInputAssemblyStateCreateInfo(
+        {},
+        vk::PrimitiveTopology::eTriangleList,
+        false
+    );
+
+    const auto viewport = vk::Viewport(0.0f, 0.0f, extent.width, extent.height, 0.0f, 1.0f);
+
+    const auto scissor = vk::Rect2D({0, 0}, extent);
+
+    const auto viewportCreateInfo = vk::PipelineViewportStateCreateInfo(
+        {},
+        1,
+        &viewport,
+        1,
+        &scissor
+    );
+
+    const auto rasterizationCreateInfo = vk::PipelineRasterizationStateCreateInfo(
+        {},
+        false,
+        false,
+        vk::PolygonMode::eFill,
+        vk::CullModeFlagBits::eBack,
+        vk::FrontFace::eClockwise,
+        false,
+        0.0f,
+        0.0f,
+        0.0f,
+        1.0f
+    );
+
+    const auto multisampleCreateInfo = vk::PipelineMultisampleStateCreateInfo(
+        {},
+        vk::SampleCountFlagBits::e1,
+        false,
+        1.0f,
+        nullptr,
+        false,
+        false
+    );
+
+    const auto blendAttachmentState = vk::PipelineColorBlendAttachmentState(
+        {},
+        vk::BlendFactor::eOne,
+        vk::BlendFactor::eZero,
+        vk::BlendOp::eAdd,
+        vk::BlendFactor::eOne,
+        vk::BlendFactor::eZero,
+        vk::BlendOp::eAdd,
+        vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA
+    );
+
+    const auto colorBlendCreateInfo = vk::PipelineColorBlendStateCreateInfo(
+        {},
+        false,
+        vk::LogicOp::eCopy,
+        1,
+        &blendAttachmentState,
+        {0.0f, 0.0f, 0.0f, 0.0f}
+    );
+
+    const auto descriptorSetLayouts = {descriptorSetLayout};
+
+    const auto pipelineLayoutCreateInfo = vk::PipelineLayoutCreateInfo(
+        {},
+        descriptorSetLayouts,
+        {}
+    );
+
+    const auto pipelineLayout = device.createPipelineLayout(pipelineLayoutCreateInfo, allocationCallbacks, dispatchLoader);
+
+    const auto attachmentDescription = vk::AttachmentDescription(
+        {},
+        surfaceFormat.format,
+        vk::SampleCountFlagBits::e1,
+        vk::AttachmentLoadOp::eClear,
+        vk::AttachmentStoreOp::eStore,
+        vk::AttachmentLoadOp::eDontCare,
+        vk::AttachmentStoreOp::eDontCare,
+        vk::ImageLayout::eUndefined,
+        vk::ImageLayout::ePresentSrcKHR
+    );
+
+    const auto attachmentReference = vk::AttachmentReference(
+        0,
+        vk::ImageLayout::eColorAttachmentOptimal
+    );
+
+    const auto subPassDescription = vk::SubpassDescription(
+        {},
+        vk::PipelineBindPoint::eGraphics,
+        0,
+        nullptr,
+        1,
+        &attachmentReference,
+        nullptr,
+        nullptr,
+        0,
+        nullptr
+    );
+
+    const auto renderPassCreateInfo = vk::RenderPassCreateInfo(
+        {},
+        1,
+        &attachmentDescription,
+        1,
+        &subPassDescription
+    );
+
+    const auto renderPass = device.createRenderPass(renderPassCreateInfo, allocationCallbacks, dispatchLoader);
+
+    const auto pipelineCreateInfo = vk::GraphicsPipelineCreateInfo(
+        {},
+        2,
+        data(shaderStages),
+        &vertexInputCreateInfo,
+        &inputAssemblyCreateInfo,
+        nullptr,
+        &viewportCreateInfo,
+        &rasterizationCreateInfo,
+        &multisampleCreateInfo,
+        nullptr,
+        &colorBlendCreateInfo,
+        &dynamicStateCreateInfo,
+        pipelineLayout,
+        renderPass,
+        0,
+        {},
+        -1
+    );
+
+    const auto pipeline = device.createGraphicsPipeline({}, pipelineCreateInfo, allocationCallbacks, dispatchLoader);
+
+    device.destroy(vertexShaderModule, allocationCallbacks, dispatchLoader);
+    device.destroy(fragmentShaderModule, allocationCallbacks, dispatchLoader);
+
+    return make_tuple(pipelineLayout, renderPass, pipeline.value);
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+vector<vk::Framebuffer> createFramebuffers(
+    const vk::Device& device,
+    const vk::RenderPass& renderPass,
+    const vector<vk::ImageView>& imageViews,
+    const vk::Extent2D& extent,
+    const vk::AllocationCallbacks& allocationCallbacks,
+    const Dispatch& dispatchLoader
+)
+{
+    vector<vk::Framebuffer> framebuffers(imageViews.size());
+
+    transform(
+        begin(imageViews),
+        end(imageViews),
+        begin(framebuffers),
+        [&device, &renderPass, &extent, &allocationCallbacks, &dispatchLoader](const vk::ImageView& imageView)
+        {
+            const auto createInfo = vk::FramebufferCreateInfo(
+                {},
+                renderPass,
+                1,
+                &imageView,
+                extent.width,
+                extent.height,
+                1
+            );
+
+            return device.createFramebuffer(createInfo, allocationCallbacks, dispatchLoader);
+        }
+    );
+
+    return framebuffers;
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+vk::CommandPool createCommandPool(
+    const vk::Device& device,
+    queueFamilyIndex_t index,
+    const vk::AllocationCallbacks& allocationCallbacks,
+    const Dispatch& dispatchLoader
+)
+{
+    const auto createInfo = vk::CommandPoolCreateInfo(
+        vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+        index.index
+    );
+
+    return device.createCommandPool(createInfo, allocationCallbacks, dispatchLoader);
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+vk::CommandBuffer createCommandBuffer(
+    const vk::Device& device,
+    const vk::CommandPool& commandPool,
+    const Dispatch& dispatchLoader
+)
+{
+    const auto allocateInfo = vk::CommandBufferAllocateInfo(
+        commandPool,
+        vk::CommandBufferLevel::ePrimary,
+        1
+    );
+
+    return device.allocateCommandBuffers(allocateInfo, dispatchLoader)
+    [0];
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+void recordCommandBuffer(
+    const vk::CommandBuffer& commandBuffer,
+    const vk::RenderPass& renderPass,
+    const vector<vk::Framebuffer>& frameBuffers,
+    uint32_t imageIndex,
+    const vk::Extent2D& extent,
+    const vk::Pipeline& pipeline,
+    const vk::PipelineLayout& pipelineLayout,
+    const vk::DescriptorSet& descriptorSet,
+    const Dispatch& dispatchLoader
+)
+{
+    const auto commandBufferBeginInfo = vk::CommandBufferBeginInfo(
+        {},
+        {}
+    );
+
+    commandBuffer.begin(commandBufferBeginInfo, dispatchLoader);
+
+    const auto clearValue = vk::ClearValue(vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f));
+
+    const auto renderPassBeginInfo = vk::RenderPassBeginInfo(
+        renderPass,
+        frameBuffers[imageIndex],
+        vk::Rect2D({0, 0}, extent),
+        1,
+        &clearValue
+    );
+
+    commandBuffer.beginRenderPass(renderPassBeginInfo, vk::SubpassContents::eInline, dispatchLoader);
+
+    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline, dispatchLoader);
+
+    const auto viewport = vk::Viewport(0.0f, 0.0f, extent.width, extent.height, 0.0f, 1.0f);
+    commandBuffer.setViewport(0, 1, &viewport, dispatchLoader);
+
+    const auto scissor = vk::Rect2D({0, 0}, extent);
+    commandBuffer.setScissor(0, 1, &scissor, dispatchLoader);
+
+    const auto descriptorSets = {descriptorSet};
+    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, descriptorSets, {}, dispatchLoader);
+
+    commandBuffer.draw(6, 1, 0, 0, dispatchLoader);
+
+    commandBuffer.endRenderPass(dispatchLoader);
+
+    commandBuffer.end(dispatchLoader);
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+tuple<vk::Semaphore, vk::Semaphore, vk::Fence> createSynchronizationObjects(
+    const vk::Device& device,
+    const vk::AllocationCallbacks& allocationCallbacks,
+    const Dispatch& dispatchLoader
+)
+{
+    return make_tuple(
+        device.createSemaphore(vk::SemaphoreCreateInfo(), allocationCallbacks, dispatchLoader),
+        device.createSemaphore(vk::SemaphoreCreateInfo(), allocationCallbacks, dispatchLoader),
+        device.createFence(vk::FenceCreateInfo(vk::FenceCreateFlagBits::eSignaled), allocationCallbacks, dispatchLoader)
+    );
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+void drawFrame(
+    const vk::Device& device,
+    const vk::SwapchainKHR& swapChain,
+    const vk::Semaphore& imageAvailable,
+    const vk::Semaphore& renderFinished,
+    const vk::Fence& inFlight,
+    const vk::CommandBuffer& commandBuffer,
+    const vk::RenderPass& renderPass,
+    const vector<vk::Framebuffer>& framebuffers,
+    const vk::Extent2D& extent,
+    const vk::Pipeline& pipeline,
+    const vk::PipelineLayout& pipelineLayout,
+    const vk::DescriptorSet& descriptorSet,
+    const vk::Queue& graphicsQueue,
+    const vk::Queue& presentationQueue,
+    // bool& frameBufferResized,
+    const Dispatch& dispatchLoader
+)
+{
+    const auto waitResult = device.waitForFences(1, &inFlight, true, numeric_limits<uint64_t>::max(), dispatchLoader);
+
+    const auto imageIndexResult = device.acquireNextImageKHR(swapChain, numeric_limits<uint64_t>::max(), imageAvailable, vk::Fence{}, dispatchLoader);
+
+    /*if(imageIndexResult.result == vk::Result::eErrorOutOfDateKHR)
+    {
+        // recreate swapChain
+        return;
+    }
+    else if(imageIndexResult.result != vk::Result::eSuccess && imageIndexResult.result != vk::Result::eSuboptimalKHR)
+    {
+        throw runtime_error("Failed to acquire swapChain image!");
+    }*/
+
+    const auto imageIndex = imageIndexResult.value;
+
+    //if(imageIndexResult.e)
+
+    const auto resetResult = device.resetFences(1, &inFlight);
+
+
+
+    commandBuffer.reset({}, dispatchLoader);
+
+    recordCommandBuffer(commandBuffer, renderPass, framebuffers, imageIndex, extent, pipeline, pipelineLayout, descriptorSet, dispatchLoader);
+
+    const vk::Semaphore waitSemaphores[] = {
+        imageAvailable,
+    };
+    const vk::PipelineStageFlags waitStages[] = {
+        vk::PipelineStageFlagBits::eColorAttachmentOutput,
+    };
+    const vk::Semaphore signalSemaphores[] = {
+        renderFinished,
+    };
+    const vk::CommandBuffer commandBuffers[] = {
+        commandBuffer
+    };
+    const auto submitInfo = vk::SubmitInfo(
+        waitSemaphores,
+        waitStages,
+        commandBuffers,
+        signalSemaphores
+    );
+
+    const auto submitResult = graphicsQueue.submit(1, &submitInfo, inFlight, dispatchLoader);
+
+    const vk::SwapchainKHR swapChains[] = {
+        swapChain
+    };
+    const uint32_t imageIndices[] = {
+        imageIndex
+    };
+    const auto presentInfo = vk::PresentInfoKHR(
+        signalSemaphores,
+        swapChains,
+        imageIndices
+    );
+
+    const auto presentResult = presentationQueue.presentKHR(presentInfo, dispatchLoader);
+
+    /*if(
+        presentResult.result == vk::Result::eErrorOutOfDateKHR ||
+        presentResult.result == vk::Result::eSuboptimalKHR||
+        frameBufferResized
+    )
+    {
+        frameBufferResized = false;
+        // recreate
+        return;
+    }
+    else if(imageIndexResult.result != vk::Result::eSuccess)
+    {
+        throw runtime_error("Failed to present swapChain image!");
+    }*/
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+uint32_t findMemoryType(
+    const vk::PhysicalDevice& physicalDevice,
+    uint32_t typeFilter,
+    vk::MemoryPropertyFlags properties,
+    const Dispatch& dispatchLoader
+)
+{
+    const auto physicalMemoryProperties = physicalDevice.getMemoryProperties(dispatchLoader);
+
+    for (uint32_t i = 0; i < physicalMemoryProperties.memoryTypeCount; i++)
+    {
+        const auto typeSupported = static_cast<bool>((typeFilter & (1 << i)));
+        const auto propertiesSupported = (physicalMemoryProperties.memoryTypes[i].propertyFlags & properties) == properties;
+        if (typeSupported && propertiesSupported)
+        {
+            return i;
+        }
+    }
+
+    throw std::runtime_error("failed to find suitable memory type!");
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+tuple<vk::Buffer, vk::DeviceMemory> createBuffer(
+    const vk::Device& device,
+    const vk::PhysicalDevice& physicalDevice,
+    vk::DeviceSize size, vk::BufferUsageFlags usage,
+    vk::MemoryPropertyFlags propertyFlags,
+    const vk::AllocationCallbacks& allocationCallbacks,
+    const Dispatch& dispatchLoader
+)
+{
+    const auto createInfo = vk::BufferCreateInfo(
+        {},
+        size,
+        usage,
+        vk::SharingMode::eExclusive,
+        {},
+        {}
+    );
+
+    const auto buffer = device.createBuffer(createInfo, allocationCallbacks, dispatchLoader);
+
+    if(!buffer)
+        throw std::runtime_error("Failed to create buffer!");
+
+    const auto memoryRequirements = device.getBufferMemoryRequirements(buffer, dispatchLoader);
+
+    const auto allocateInfo = vk::MemoryAllocateInfo(
+        memoryRequirements.size,
+        findMemoryType(physicalDevice, memoryRequirements.memoryTypeBits, propertyFlags, dispatchLoader)
+    );
+
+    const auto memory = device.allocateMemory(allocateInfo, allocationCallbacks, dispatchLoader);
+
+    device.bindBufferMemory(buffer, memory, 0, dispatchLoader);
+
+    return std::make_tuple(buffer, memory);
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+tuple<vk::Image, vk::DeviceMemory> createImage(
+    const vk::Device& device,
+    const vk::PhysicalDevice& physicalDevice,
+    uint32_t width, uint32_t height,
+    const vk::Format& format,
+    const vk::ImageTiling& tiling,
+    vk::ImageUsageFlags usage,
+    vk::MemoryPropertyFlags properties,
+    const vk::AllocationCallbacks& allocationCallbacks,
+    const Dispatch& dispatchLoader
+)
+{
+    const auto createInfo = vk::ImageCreateInfo(
+        {},
+        vk::ImageType::e2D,
+        format,
+        vk::Extent3D(width, height, 1),
+        1,
+        1,
+        vk::SampleCountFlagBits::e1,
+        tiling,
+        usage,
+        vk::SharingMode::eExclusive,
+        0,
+        nullptr,
+        vk::ImageLayout::eUndefined
+    );
+
+    const auto image = device.createImage(createInfo, allocationCallbacks, dispatchLoader);
+
+    const auto imageMemoryRequirements = device.getImageMemoryRequirements(image, dispatchLoader);
+
+    const auto allocateInfo = vk::MemoryAllocateInfo(
+        imageMemoryRequirements.size,
+        findMemoryType(physicalDevice, imageMemoryRequirements.memoryTypeBits, properties, dispatchLoader)
+    );
+
+    const auto memory = device.allocateMemory(allocateInfo, allocationCallbacks, dispatchLoader);
+
+    device.bindImageMemory(image, memory, 0, dispatchLoader);
+
+    return make_tuple(image, memory);
+}
+
+vk::Format translateFormat(SailPixelFormat format)
+{
+    switch (format)
+    {
+        case SailPixelFormat::SAIL_PIXEL_FORMAT_BPP32_RGBA:
+            return vk::Format::eR8G8B8A8Unorm;
+        case SailPixelFormat::SAIL_PIXEL_FORMAT_BPP32_BGRA:
+            return vk::Format::eR8G8B8A8Unorm;
+        case SailPixelFormat::SAIL_PIXEL_FORMAT_BPP32_ARGB:
+            return vk::Format::eR8G8B8A8Unorm;
+        case SailPixelFormat::SAIL_PIXEL_FORMAT_BPP32_ABGR:
+            return vk::Format::eR8G8B8A8Unorm;
+        default:
+            throw std::runtime_error("Unsupported format!");
+    }
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+tuple<vk::Image, vk::DeviceMemory, vk::Buffer, vk::DeviceMemory, uint32_t, uint32_t> loadImage(
+    const vk::Device& device,
+    const vk::PhysicalDevice& physicalDevice,
+    const filesystem::path& path,
+    const vk::AllocationCallbacks& allocationCallbacks,
+    const Dispatch& dispatchLoader
+)
+{
+    sail::image loadedImage{path.string()};
+
+    loadedImage.convert(SailPixelFormat::SAIL_PIXEL_FORMAT_BPP32_RGBA);
+
+    const auto width = loadedImage.width();
+    const auto height = loadedImage.height();
+    const auto pixelSize = 4 * sizeof(std::byte);
+    const auto srcRowStride = loadedImage.bytes_per_line();
+    const auto dstRowStride = width * pixelSize;
+    const auto size = width * height * pixelSize;
+
+    const auto [buffer, bufferMemory] = createBuffer(
+        device, physicalDevice, size,
+        vk::BufferUsageFlagBits::eTransferSrc,
+        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+        allocationCallbacks,
+        dispatchLoader
+    );
+
+    const auto mappedMemoryPtr = device.mapMemory(bufferMemory, 0, size, {}, dispatchLoader);
+    const auto loadedImagePtr = loadedImage.pixels();
+    const auto rowStrideLoadedImage = srcRowStride;
+    const auto rowStrideMappedMemory = dstRowStride;
+    const auto rowPixelsLength = dstRowStride;
+    for(size_t row = 0; row < height; ++row)
+    {
+        const auto offsetLoadedImagePtr = static_cast<std::byte*>(loadedImagePtr) + row * rowStrideLoadedImage;
+        const auto offsetMappedMemoryPtr = static_cast<std::byte*>(mappedMemoryPtr) + row * rowStrideMappedMemory;
+        std::memcpy(offsetMappedMemoryPtr, offsetLoadedImagePtr, rowPixelsLength);
+    }
+    device.unmapMemory(bufferMemory, dispatchLoader);
+
+    const auto [image, imageMemory] = createImage(
+        device, physicalDevice,
+        loadedImage.width(), loadedImage.height(),
+        translateFormat(loadedImage.pixel_format()),
+        vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+        vk::MemoryPropertyFlagBits::eDeviceLocal,
+        allocationCallbacks,
+        dispatchLoader
+    );
+
+    return std::make_tuple(
+        image, imageMemory,
+        buffer, bufferMemory,
+        width, height
+    );
+}
+
+template<typename F, typename Dispatch = vk::DispatchLoaderStatic>
+void singleTimeCommands(
+    const vk::Device& device,
+    const vk::CommandPool& pool,
+    const vk::Queue& graphicsQueue,
+    F&& commands,
+    const Dispatch& dispatchLoader
+)
+{
+    const auto commandBuffer = createCommandBuffer(device, pool, dispatchLoader);
+
+    const auto beginInfo = vk::CommandBufferBeginInfo(
+        vk::CommandBufferUsageFlagBits::eOneTimeSubmit
+    );
+
+    commandBuffer.begin(beginInfo, dispatchLoader);
+
+    std::forward<F>(commands)(commandBuffer);
+
+    commandBuffer.end(dispatchLoader);
+
+    const auto commandBuffers = {commandBuffer};
+    const auto submitInfo = vk::SubmitInfo(
+        {},
+        {},
+        commandBuffers,
+        {}
+    );
+
+    const auto submitInfos = {submitInfo};
+    graphicsQueue.submit(submitInfos, {}, dispatchLoader);
+    graphicsQueue.waitIdle(dispatchLoader);
+
+    device.freeCommandBuffers(pool, commandBuffers, dispatchLoader);
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+void transitionImageLayout(
+    const vk::Device& device,
+    const vk::CommandPool& pool,
+    const vk::Queue& graphicsQueue,
+    const vk::Image& image,
+    const vk::ImageLayout& oldLayout,
+    const vk::ImageLayout& newLayout,
+    const Dispatch& dispatchLoader
+)
+{
+    const auto selectAccessAndStages = [](const vk::ImageLayout& oldLayout, const vk::ImageLayout& newLayout)
+    {
+        if(oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eTransferDstOptimal)
+        {
+            return std::make_tuple(
+                vk::AccessFlagBits::eNone,
+                vk::AccessFlagBits::eTransferWrite,
+                vk::PipelineStageFlagBits::eTopOfPipe,
+                vk::PipelineStageFlagBits::eTransfer
+            );
+        }
+        else if(oldLayout == vk::ImageLayout::eTransferDstOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal)
+        {
+            return std::make_tuple(
+                vk::AccessFlagBits::eTransferWrite,
+                vk::AccessFlagBits::eShaderRead,
+                vk::PipelineStageFlagBits::eTransfer,
+                vk::PipelineStageFlagBits::eFragmentShader
+            );
+        }
+        else
+        {
+            throw std::runtime_error("Invalid transition!");
+        }
+    };
+
+    singleTimeCommands(device, pool, graphicsQueue, [&](auto&& commandBuffer){
+        const auto [srcAccess, dstAccess, srcStage, dstStage] = selectAccessAndStages(oldLayout, newLayout);
+
+        const auto imageBarrier = vk::ImageMemoryBarrier(
+            srcAccess,
+            dstAccess,
+            oldLayout,
+            newLayout,
+            vk::QueueFamilyIgnored,
+            vk::QueueFamilyIgnored,
+            image,
+            vk::ImageSubresourceRange(
+                vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1
+            )
+        );
+        const auto imageBarriers = {imageBarrier};
+
+        commandBuffer.pipelineBarrier(srcStage, dstStage, {}, {}, {}, imageBarriers, dispatchLoader);
+    }, dispatchLoader);
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+void copyBufferToImage(
+    const vk::Device& device,
+    const vk::CommandPool& pool,
+    const vk::Queue& graphicsQueue,
+    const vk::Buffer& buffer,
+    const vk::Image& image,
+    uint32_t width, uint32_t height,
+    const Dispatch& dispatchLoader
+)
+{
+    singleTimeCommands(device, pool, graphicsQueue, [&](auto&& commandBuffer){
+        const auto bufferImageCopy = vk::BufferImageCopy(
+            0,
+            width, height,
+            vk::ImageSubresourceLayers(
+                vk::ImageAspectFlagBits::eColor,
+                0,
+                0,
+                1
+            ),
+            vk::Offset3D(0, 0, 0),
+            vk::Extent3D(width, height, 1)
+        );
+        const auto bufferImageCopies = {bufferImageCopy};
+
+        commandBuffer.copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, bufferImageCopies, dispatchLoader);
+    }, dispatchLoader);
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+tuple<vk::Image, vk::DeviceMemory> loadTextureImage(
+    const vk::Device& device,
+    const vk::PhysicalDevice& physicalDevice,
+    const vk::CommandPool& pool,
+    const vk::Queue& graphicsQueue,
+    const filesystem::path& path,
+    const vk::AllocationCallbacks& allocationCallbacks,
+    const Dispatch& dispatchLoader
+)
+{
+    const auto [image, imageMemory, buffer, bufferMemory, width, height] = loadImage(device, physicalDevice, path, allocationCallbacks, dispatchLoader);
+
+    transitionImageLayout(device, pool, graphicsQueue, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, dispatchLoader);
+    copyBufferToImage(device, pool, graphicsQueue, buffer, image, width, height, dispatchLoader);
+    transitionImageLayout(device, pool, graphicsQueue, image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, dispatchLoader);
+
+    device.destroyBuffer(buffer, allocationCallbacks, dispatchLoader);
+    device.freeMemory(bufferMemory, allocationCallbacks, dispatchLoader);
+
+    return std::make_tuple(image, imageMemory);
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+vk::ImageView createTextureView(
+    const vk::Device& device,
+    const vk::Image& image,
+    const vk::AllocationCallbacks& allocationCallbacks,
+    const Dispatch& dispatchLoader
+)
+{
+    const auto createInfo = vk::ImageViewCreateInfo(
+        {},
+        image,
+        vk::ImageViewType::e2D,
+        vk::Format::eR8G8B8A8Unorm,
+        vk::ComponentMapping(),
+        vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)
+    );
+
+    const auto imageView = device.createImageView(createInfo, allocationCallbacks, dispatchLoader);
+
+    return imageView;
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+vk::Sampler createTextureSampler(
+    const vk::Device& device,
+    const vk::PhysicalDevice& physicalDevice,
+    const vk::AllocationCallbacks& allocationCallbacks,
+    const Dispatch& dispatchLoader
+)
+{
+    const auto properties = physicalDevice.getProperties(dispatchLoader);
+
+    const auto createInfo = vk::SamplerCreateInfo(
+        {},
+        vk::Filter::eLinear,
+        vk::Filter::eLinear,
+        {},
+        vk::SamplerAddressMode::eMirroredRepeat,
+        vk::SamplerAddressMode::eMirroredRepeat,
+        vk::SamplerAddressMode::eMirroredRepeat,
+        {},
+        vk::False,
+        {},
+        //properties.limits.maxSamplerAnisotropy,
+        vk::False,
+        vk::CompareOp::eAlways,
+        {},
+        {},
+        vk::BorderColor::eIntOpaqueBlack,
+        vk::False
+    );
+
+    const auto sampler = device.createSampler(createInfo, allocationCallbacks, dispatchLoader);
+
+    return sampler;
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+vk::DescriptorPool createDescriptorPool(
+    const vk::Device& device,
+    const vk::AllocationCallbacks& allocationCallbacks,
+    const Dispatch& dispatchLoader
+)
+{
+    const auto imagePoolSize = vk::DescriptorPoolSize(
+        vk::DescriptorType::eSampledImage,
+        1
+    );
+    const auto samplerPoolSize = vk::DescriptorPoolSize(
+        vk::DescriptorType::eSampler,
+        1
+    );
+
+    const auto poolSizes = {imagePoolSize, samplerPoolSize};
+
+    const auto createInfo = vk::DescriptorPoolCreateInfo(
+        {},
+        1,
+        poolSizes
+    );
+
+    const auto descriptorPool = device.createDescriptorPool(createInfo, allocationCallbacks, dispatchLoader);
+
+    return descriptorPool;
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+vk::DescriptorSet createDescriptorSet(
+    const vk::Device& device,
+    const vk::DescriptorPool& pool,
+    const vk::DescriptorSetLayout& layout,
+    const Dispatch& dispatchLoader
+)
+{
+    const auto layouts = {layout};
+
+    const auto allocInfo = vk::DescriptorSetAllocateInfo(
+        pool,
+        layouts
+    );
+
+    const auto descriptorSet = device.allocateDescriptorSets(allocInfo, dispatchLoader)[0];
+
+    return descriptorSet;
+}
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+void writeTextureSamplerToDescriptorSet(
+    const vk::Device& device,
+    const vk::ImageView& imageView,
+    const vk::Sampler& sampler,
+    const vk::DescriptorSet& descriptorSet,
+    const Dispatch& dispatchLoader
+)
+{
+    const auto imageInfo = vk::DescriptorImageInfo(
+        {},
+        imageView,
+        vk::ImageLayout::eShaderReadOnlyOptimal
+    );
+
+    const auto samplerInfo = vk::DescriptorImageInfo(
+        sampler,
+        {},
+        {}
+    );
+
+    const auto imageInfos = {imageInfo};
+    const auto samplerInfos = {samplerInfo};
+
+    const auto imageWrite = vk::WriteDescriptorSet(
+        descriptorSet,
+        0, 0,
+        vk::DescriptorType::eSampledImage,
+        imageInfos,
+        {},
+        {}
+    );
+
+    const auto samplerWrite = vk::WriteDescriptorSet(
+        descriptorSet,
+        1, 0,
+        vk::DescriptorType::eSampler,
+        samplerInfos,
+        {},
+        {}
+    );
+
+    const auto descriptorWrites = {imageWrite, samplerWrite};
+
+    device.updateDescriptorSets(descriptorWrites, {}, dispatchLoader);
+}
+
+GLFWwindow* createGLFW(int width, int height)
+{
+    assert(glfwInit());
+    assert(glfwVulkanSupported());
+
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+
+    return glfwCreateWindow(width, height, "Vulkan", nullptr, nullptr);
+}
+
+template<typename F>
+int run(GLFWwindow* window, F&& draw)
+{
+    while(!glfwWindowShouldClose(window))
+    {
+        glfwPollEvents();
+        draw();
+    }
+
+    return 0;
+}
+
+class QVulkanWidget
+    : public QWidget
+{
+private:
+    std::function<void()> _draw;
+public:
+    QVulkanWidget(QWidget* parent = nullptr)
+        : QWidget(parent)
+    {
+        setAttribute(Qt::WA_NativeWindow);
+
+        setAttribute(Qt::WA_PaintOnScreen);
+        setAttribute(Qt::WA_NoSystemBackground);
+    }
+public:
+    template<typename F>
+    void setDraw(F&& draw)
+    {
+        _draw = std::forward<F>(draw);
+    }
+protected:
+    QPaintEngine * paintEngine() const override {return nullptr;}
+    void           paintEvent(QPaintEvent * event) override {};
+protected:
+    bool nativeEvent(const QByteArray & eventType, void * message, qintptr * result) override
+    {
+        Q_UNUSED(eventType);
+        Q_UNUSED(result);
+
+        MSG* msgPtr = static_cast<MSG*>(message);
+
+        if(msgPtr->message == WM_PAINT)
+        {
+            _draw();
+            return true;
+        }
+
+        return QWidget::nativeEvent(eventType, message, result);
+    }
+};
+
+QVulkanWidget* createQt5(int width, int height)
+{
+    auto widget = new QVulkanWidget();
+    widget->setFixedSize(width, height);
+    widget->show();
+    return widget;
+}
+
+class QSelectDialog : public QDialog
+{
+private:
+    std::optional<size_t> _selectedIndex;
+public:
+    QSelectDialog(QStringList options)
+    {
+        auto rootLayout = new QVBoxLayout();
+        auto listWidget = new QListWidget();
+        for(const auto& option : options)
+        {
+            listWidget->addItem(option);
+        }
+        listWidget->setCurrentRow(0);
+        rootLayout->addWidget(listWidget);
+        auto selectButton = new QPushButton("Select");
+        QObject::connect(selectButton, &QPushButton::released, this, [=, this](){
+           _selectedIndex = listWidget->currentRow();
+           close();
+        });
+        rootLayout->addWidget(selectButton);
+        setLayout(rootLayout);
+    }
+public:
+    std::optional<size_t> getSelectedIndex() const
+    {
+        return _selectedIndex;
+    }
+};
+
+template<typename Dispatch = vk::DispatchLoaderStatic>
+std::optional<vk::PhysicalDevice> selectPhysicalDevice(const vk::Instance& instance, const Dispatch& dispatchLoader)
+{
+    const auto physicalDevices = instance.enumeratePhysicalDevices(dispatchLoader);
+    QStringList options{};
+    for(const auto& physicalDevice : physicalDevices)
+    {
+        const auto deviceProperties = physicalDevice.getProperties(dispatchLoader);
+        options.append(QString::fromLatin1(deviceProperties.deviceName.data()));
+    }
+    QSelectDialog selectDialog{options};
+    selectDialog.show();
+
+    QApplication::exec();
+
+    return selectDialog.getSelectedIndex().transform([&](auto index){ return physicalDevices[index]; });
+}
+
+template<typename F>
+int run(QVulkanWidget* window, F&& draw)
+{
+    window->setDraw(std::forward<F>(draw));
+    return QApplication::exec();
+}
+
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+#include <libavutil/imgutils.h>
+#include <libavutil/avutil.h>
+#include <libswscale/swscale.h>
+}
+
+int maino(int argc, char* argv[]) {
+
+    const char* input_file = R"(C:\Users\michal\Downloads\test0.mp4)";
+
+    // Register all available codecs, demuxers, and protocols
+    //av_register_all();
+
+    // Open input file and allocate format context
+    AVFormatContext* format_ctx = nullptr;
+    if (avformat_open_input(&format_ctx, input_file, nullptr, nullptr) < 0) {
+        std::cerr << "Could not open input file: " << input_file << std::endl;
+        return 2;
+    }
+
+    // Retrieve stream information
+    if (avformat_find_stream_info(format_ctx, nullptr) < 0) {
+        std::cerr << "Could not find stream information" << std::endl;
+        return 3;
+    }
+
+    // Find video stream
+    int video_stream_idx = -1;
+    for (unsigned int i = 0; i < format_ctx->nb_streams; ++i) {
+        if (format_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+            video_stream_idx = i;
+            break;
+        }
+    }
+
+    if (video_stream_idx == -1) {
+        std::cerr << "Could not find video stream" << std::endl;
+        return 4;
+    }
+
+    // Get codec parameters and codec context
+    AVCodecParameters* codecpar = format_ctx->streams[video_stream_idx]->codecpar;
+    const AVCodec* codec = avcodec_find_decoder(codecpar->codec_id);
+    AVCodecContext* codec_ctx = avcodec_alloc_context3(codec);
+    avcodec_parameters_to_context(codec_ctx, codecpar);
+    codec_ctx->thread_count = std::thread::hardware_concurrency();
+
+    // Open codec
+    if (avcodec_open2(codec_ctx, codec, nullptr) < 0) {
+        std::cerr << "Could not open codec" << std::endl;
+        return 5;
+    }
+
+    // Allocate frame and packet
+    AVFrame* frame = av_frame_alloc();
+    AVPacket packet;
+    av_init_packet(&packet);
+
+    using milliseconds = chrono::duration<double, std::milli>;
+
+    milliseconds totalTime = milliseconds(0);
+    size_t totalFrames = 0;
+
+    // Read frames from the video stream
+    while (av_read_frame(format_ctx, &packet) >= 0) {
+        if (packet.stream_index == video_stream_idx) {
+            int frames = 0;
+            const auto start = chrono::high_resolution_clock::now();
+            // Decode video frame
+            int ret = avcodec_send_packet(codec_ctx, &packet);
+            if (ret < 0) {
+                std::cerr << "Error sending packet for decoding" << std::endl;
+                break;
+            }
+
+            while (ret >= 0) {
+                ret = avcodec_receive_frame(codec_ctx, frame);
+                if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+                    break;
+                } else if (ret < 0) {
+                    std::cerr << "Error during decoding" << std::endl;
+                    break;
+                }
+                ++frames;
+            }
+            const auto end = chrono::high_resolution_clock::now();
+
+            totalFrames += frames;
+            totalTime += chrono::duration_cast<milliseconds>(end - start);
+        }
+
+        av_packet_unref(&packet);
+    }
+
+    print(cout, "Avg FPS: {}", 1000.0/(totalTime / totalFrames).count());
+    print(cout, "Total frames: {}", totalFrames);
+
+    // Free allocated resources
+    av_frame_free(&frame);
+    avcodec_free_context(&codec_ctx);
+    avformat_close_input(&format_ctx);
+
+    return 0;
+}
+
+int maina(int argc, char** argv)
+{
+    auto app = QApplication(argc, argv);
+
+    const auto width = 800;
+    const auto height = 600;
+
+    try
+    {
+        const auto dispatchLoader = vk::DispatchLoaderStatic();
+        const auto allocationCallbacks = vk::createDefaultAllocationCallbacks();
+
+        //printInstanceExtensions(dispatchLoader);
+        //printLayersWithInstanceExtensions(dispatchLoader);
+
+        const auto instance = createInstance(allocationCallbacks, getRequiredLayers(), getRequiredInstanceExtensions(), dispatchLoader);
+
+        //printAllPhysicalDevicesWithExtensionsAndProperties(instance, dispatchLoader);
+
+        const auto selectedPhysicalDevice = selectPhysicalDevice(instance, dispatchLoader);
+        assert(selectedPhysicalDevice != std::nullopt);
+        const auto physicalDevice = *selectedPhysicalDevice;
+        assert(isPhysicalDeviceSuitable(physicalDevice, getRequiredDeviceExtensions(), dispatchLoader));
+        const auto [device, queueFamilyIndex] = createDevice(physicalDevice, getRequiredLayers(), getRequiredDeviceExtensions(), allocationCallbacks, dispatchLoader);
+
+        const auto window = createQt5(width, height);
+        const auto surface = createWindowSurface(instance, window, allocationCallbacks, dispatchLoader);
+
+        assert(physicalDevice.getSurfaceSupportKHR(queueFamilyIndex.index, surface, dispatchLoader));
+
+        const auto graphicsQueue = device.getQueue(queueFamilyIndex.index, 0, dispatchLoader);
+        const auto presentationQueue = device.getQueue(queueFamilyIndex.index, 0, dispatchLoader);
+
+        const auto [surfaceFormat, presentMode, extent] = createSwapChainDetails(physicalDevice, surface, window, dispatchLoader);
+
+        const auto [swapChain, swapChainImageViews] = createSwapChainAndImageViews(
+            physicalDevice, device, surface, queueFamilyIndex, surfaceFormat,
+            presentMode, extent, {}, allocationCallbacks, dispatchLoader
+         );
+
+        const auto descriptorSetLayout = createDescriptorSetLayout(device, allocationCallbacks, dispatchLoader);
+
+        const auto [pipelineLayout, renderPass, pipeline] = createPipeline(device, surfaceFormat, extent, descriptorSetLayout, allocationCallbacks, dispatchLoader);
+
+        const auto frameBuffers = createFramebuffers(device, renderPass, swapChainImageViews, extent, allocationCallbacks, dispatchLoader);
+
+        const auto commandPool = createCommandPool(device, queueFamilyIndex, allocationCallbacks, dispatchLoader);
+
+        const auto descriptorPool = createDescriptorPool(device, allocationCallbacks, dispatchLoader);
+
+        const auto descriptorSet = createDescriptorSet(device, descriptorPool, descriptorSetLayout, dispatchLoader);
+
+        const auto [image, imageMemory] = loadTextureImage(
+            device, physicalDevice, commandPool, graphicsQueue,
+            "data/frame0.tiff", allocationCallbacks, dispatchLoader
+        );
+
+        const auto imageView = createTextureView(device, image, allocationCallbacks, dispatchLoader);
+        const auto imageSampler = createTextureSampler(device, physicalDevice, allocationCallbacks, dispatchLoader);
+
+        writeTextureSamplerToDescriptorSet(device, imageView, imageSampler, descriptorSet, dispatchLoader);
+
+        const auto commandBuffer = createCommandBuffer(device, commandPool, dispatchLoader);
+
+        const auto [imageAvailable, renderFinished, inFlight] = createSynchronizationObjects(device, allocationCallbacks, dispatchLoader);
+
+        const auto result = run(window, [&](){
+            drawFrame(
+                device,
+                swapChain,
+                imageAvailable,
+                renderFinished,
+                inFlight,
+                commandBuffer,
+                renderPass,
+                frameBuffers,
+                extent,
+                pipeline,
+                pipelineLayout,
+                descriptorSet,
+                graphicsQueue,
+                presentationQueue,
+                dispatchLoader
+            );
+        });
+
+        device.waitIdle(dispatchLoader);
+
+        device.free(commandPool, 1, &commandBuffer, dispatchLoader);
+
+        device.destroy(inFlight, allocationCallbacks, dispatchLoader);
+        device.destroy(renderFinished, allocationCallbacks, dispatchLoader);
+        device.destroy(imageAvailable, allocationCallbacks, dispatchLoader);
+        const auto descriptorSets = {descriptorSet};
+        device.freeDescriptorSets(descriptorPool, descriptorSets, dispatchLoader);
+        device.destroy(descriptorPool, allocationCallbacks, dispatchLoader);
+        const auto commandBuffers = {commandBuffer};
+        device.freeCommandBuffers(commandPool, commandBuffers, dispatchLoader);
+        device.destroy(commandPool, allocationCallbacks, dispatchLoader);
+        for(const auto& frameBuffer : frameBuffers)
+            device.destroy(frameBuffer, allocationCallbacks, dispatchLoader);
+        device.destroy(pipeline, allocationCallbacks, dispatchLoader);
+        device.destroy(renderPass, allocationCallbacks, dispatchLoader);
+        device.destroy(pipelineLayout, allocationCallbacks, dispatchLoader);
+        for(const auto& swapChainImageView : swapChainImageViews)
+            device.destroy(swapChainImageView, allocationCallbacks, dispatchLoader);
+        device.destroySwapchainKHR(swapChain, allocationCallbacks, dispatchLoader);
+        device.destroyDescriptorSetLayout(descriptorSetLayout, allocationCallbacks, dispatchLoader);
+        device.destroySampler(imageSampler, allocationCallbacks, dispatchLoader);
+        device.destroyImageView(imageView, allocationCallbacks, dispatchLoader);
+        device.destroyImage(image, allocationCallbacks, dispatchLoader);
+        device.freeMemory(imageMemory, allocationCallbacks, dispatchLoader);
+        device.destroy(allocationCallbacks, dispatchLoader);
+
+        instance.destroySurfaceKHR(surface, allocationCallbacks, dispatchLoader);
+        instance.destroy(allocationCallbacks, dispatchLoader);
+
+        return result;
+    }
+    catch (exception& e)
+    {
+        cerr << e.what() << endl;
+    }
+
+    return 0;
+}
